@@ -3,12 +3,12 @@ library(reticulate)
 source("./R/thresh_ot_func.R")
 use_python("~/Library/r-miniconda-arm64/bin/python", required = T) # choose your own python path
 source_python("./python/sinkhorn_unbalanced_tv.py")
-# sim = 10
+sim = 200
 n0 = 100*sim
 n1 = 10*sim
-d = 2
+d = 10
 n = n1 + n0
-n_rep = 100
+n_rep = 50
 
 linear_bool = T
 # covariate_case = 4
@@ -30,7 +30,7 @@ for(iter in 1:n_rep){
   idx1 = which(idx == 1)
   
   
-  par(mfrow = c(2,2))
+  # par(mfrow = c(2,2))
   # case 1 (less overlap)
   if(covariate_case == 1){
     X = matrix(NA,nrow = n, ncol = d)
@@ -38,7 +38,7 @@ for(iter in 1:n_rep){
                      matrix(rnorm(n0/2*d, mean = -1, sd = 1),ncol = d))
     X[idx1,] = rbind(matrix(rnorm(n1/2*d, mean = 1, sd = 2),ncol = d),
                      matrix(rnorm(n1/2*d, mean = 1, sd = 1),ncol = d))
-    # par(mfrow = c(1,1))
+    # par(mfrow = c(1,2))
     # plot_cov(X,idx0,idx1,main="case 1 (less overlap)")
   }
   
@@ -51,7 +51,7 @@ for(iter in 1:n_rep){
     X[idx1,] = rbind(matrix(rnorm(n1/2*d, mean = 1/2, sd = 0.5),ncol = d),
                      matrix(rnorm(n1/2*d, mean = -1/2, sd = 0.5),ncol = d))
     # par(mfrow = c(1,1))
-    # plot_cov(X,idx0,idx1,main="case 2 (more overlap)")
+    plot_cov(X,idx0,idx1,main="case 2 (more overlap)")
   }
   
   # case 3 (disc x conti: less overlap)
@@ -80,7 +80,28 @@ for(iter in 1:n_rep){
   }
   
   
+  
+  
   Y = rep(NA,n)
+  
+  
+  # 10d
+  if(d == 10){
+    if(linear_bool){
+      Y0_all = -1 - apply(X[,1:5],1,sum) * apply(X[,6:10],1,sum) + apply(X[,1:5],1,sum)+X[,4] + rnorm(n,sd = 1)
+      Y1_all = 2 + 2*apply(X[,1:4],1,sum) + apply(X[,5:8],1,sum) - X[,9]^2+ X[,10]^2 + rnorm(n,sd = .5)
+    }else{
+      # nonlinear
+      Y0_all = log((apply(X[,1:3],1,sum) +apply(X[,4:8],1,sum) +X[,9]+X[,10])^2 + 0.5*exp(-X[,2]/10)) + rnorm(n,sd = 1)
+      Y1_all = log(10+ exp(1-apply(X[,1:3],1,sum) - apply(X[,4:8],1,sum) -X[,9]-X[,10])) + rnorm(n,sd = .5)
+      # par(mfrow = c(2,3))
+      # hist(Y1_all);hist(Y1_all[idx1]);hist(Y1_all[idx0]);
+      # hist(Y0_all);hist(Y0_all[idx1]);hist(Y0_all[idx0]);
+      # par(mfrow = c(1,1))
+      # mean(Y1_all) - mean(Y0_all)
+    }
+    
+  }
   
   
   # 4d
@@ -165,10 +186,20 @@ for(iter in 1:n_rep){
   
   # OT
   ot <- import("ot")
-  reg_m_kl = 1e-3/5
-  reg = 1e-3/5
+  if(d>4){
+    reg_m_kl = 1e-3/2
+    reg = 1e-3/2
+    maxiter = 2000
+  }else{
+    reg_m_kl = 1e-3/5
+    reg = 1e-3/5
+    maxiter = 2000
+  }
+  # G_ub_tv = sinkhorn_knopp_unbalanced_tv(a1, a0, M, reg, reg_m_kl,if_tv = 1,numItermax=as.integer(maxiter))
+  # summary(apply(G_ub_tv,1,sum))
   
-  ubG = ot$sinkhorn_unbalanced(a1, a0, M, reg,reg_m_kl, div='kl')
+  ubG = ot$sinkhorn_unbalanced(a1, a0, M, reg,reg_m_kl, div='kl',numItermax=as.integer(maxiter))
+  # summary(apply(ubG,1,sum))
   Y0_ot = rep(NA,n)
   Y0_ot[idx0] = Y0
   Y0_ot[idx1] = (ubG %*% Y0) / apply(ubG,1,sum)
@@ -176,8 +207,11 @@ for(iter in 1:n_rep){
   Y1_ot[idx0] = (t(ubG) %*% Y1 ) / apply(ubG,2,sum)
   Y1_ot[idx1] = Y1
   
+  
+  
   # OT-tv
-  G_ub_tv = sinkhorn_knopp_unbalanced_tv(a1, a0, M, reg, reg_m_kl,if_tv = 1,numItermax=as.integer(2000))
+  G_ub_tv = sinkhorn_knopp_unbalanced_tv(a1, a0, M, reg, reg_m_kl,if_tv = 1,numItermax=as.integer(maxiter))
+  # summary(apply(G_ub_tv,1,sum))
   Y0_tv = rep(NA,n)
   Y0_tv[idx0] = Y0
   Y0_tv[idx1] = (G_ub_tv %*% Y0) / apply(G_ub_tv,1,sum)
@@ -187,15 +221,21 @@ for(iter in 1:n_rep){
   Y1_tv[idx1] = Y1
   
   # OT-tvow
-  pi0 = apply(G_ub_tv,2,sum)/sum(G_ub_tv)
-  pi1 = apply(G_ub_tv,1,sum)/sum(G_ub_tv)
-  Y0_tvow = Y0_tv;Y1_tvow = Y1_tv;
-  if(any(pi0==0)){
-    Y1_tvow[idx0[pi0==0]] = NA
+  if(d==10){
+    Y0_tvow = Y0_tv;Y1_tvow = Y1_tv;
   }
-  if(any(pi1==1)){
-    Y0_tvow[idx1[pi1==0]] = NA
+  if(d %in% c(2,3,4)){
+    pi0 = apply(G_ub_tv,2,sum)/sum(G_ub_tv)
+    pi1 = apply(G_ub_tv,1,sum)/sum(G_ub_tv)
+    Y0_tvow = Y0_tv;Y1_tvow = Y1_tv;
+    if(any(pi0==0)){
+      Y1_tvow[idx0[pi0==0]] = NA
+    }
+    if(any(pi1==1)){
+      Y0_tvow[idx1[pi1==0]] = NA
+    }
   }
+  
   
   # OT2
   ot <- import("ot")
@@ -259,6 +299,7 @@ for(iter in 1:n_rep){
   ATE_ow = mean(Y_ow$Y1, na.rm=T) - mean(Y_ow$Y0, na.rm=T)
   
   # doubly robust
+  
   if(d == 4){
     pred0 = lm(Y0 ~ X0[,1] + X0[,2] + X0[,3]+ X0[,4])
     pred1 = lm(Y1 ~ X1[,1] + X1[,2] + X1[,3]+ X1[,4])
@@ -275,11 +316,18 @@ for(iter in 1:n_rep){
     
   }
   
-  Y0_pred = cbind(1, X) %*% pred0$coefficients
-  Y1_pred = cbind(1, X) %*% pred1$coefficients
   
-  ATE_dr = mean(Y1_pred - Y0_pred) + mean(  (Y1-Y1_pred[idx1])/(ps_e[idx1]) - 
-                                              (Y0-Y0_pred[idx0])/(1-ps_e[idx0]), na.rm = T )
+  
+  if(d %in% c(2,3,4)){
+    Y0_pred = cbind(1, X) %*% pred0$coefficients
+    Y1_pred = cbind(1, X) %*% pred1$coefficients
+    ATE_dr = mean(Y1_pred - Y0_pred) + mean(  (Y1-Y1_pred[idx1])/(ps_e[idx1]) - 
+                                                (Y0-Y0_pred[idx0])/(1-ps_e[idx0]), na.rm = T )
+    
+  }else{
+    ATE_dr = 0
+  }
+  
   
   # doubly robust oracle
   if(d == 4){
@@ -301,8 +349,13 @@ for(iter in 1:n_rep){
     Y1_pred = cbind(1, X[,1], X[,2]) %*% pred1$coefficients
   }
   
-  ATE_dr_oracle = mean(Y1_pred - Y0_pred) + mean(  (Y1-Y1_pred[idx1])/(ps_e[idx1]) - 
-                                                     (Y0-Y0_pred[idx0])/(1-ps_e[idx0]), na.rm = T )
+  if(d %in% c(2,3,4)){
+    ATE_dr_oracle = mean(Y1_pred - Y0_pred) + mean(  (Y1-Y1_pred[idx1])/(ps_e[idx1]) - 
+                                                       (Y0-Y0_pred[idx0])/(1-ps_e[idx0]), na.rm = T )
+    
+  }else{
+    ATE_dr_oracle=0
+  }
   
   
   
@@ -340,3 +393,5 @@ bias = abs(apply(output_all[,1:n_method]-output_all[,n_method+1], 2,mean))
 MSE = apply(output_all[,1:n_method]-output_all[,n_method+1], 2,function(x){mean(x^2)})
 VAR = apply(output_all[,1:n_method], 2,function(x){mean((x-mean(x))^2)})
 
+result = cbind(bias,VAR, MSE)
+result[order(MSE),]
